@@ -649,6 +649,8 @@ alter_space_commit(struct trigger *trigger, void * /* event */)
 	 * cache with it.
 	 */
 	struct space *old_space = space_cache_replace(alter->new_space);
+
+	old_space->handler->onAlterSpace(old_space, alter->new_space);
 	assert(old_space == alter->old_space);
 	space_delete(old_space);
 	alter->new_space = NULL; /* for alter_space_delete(). */

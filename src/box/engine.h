@@ -205,6 +205,13 @@ public:
 		      struct port *);
 
 	virtual void onAlter(Handler *old);
+
+	/**
+	 * This method is called after altering space and
+	 * replacing old_space with new_space in space cache.
+	 */
+	virtual void onAlterSpace(struct space *old_space,
+				  struct space *new_space);
 	Engine *engine;
 };
 

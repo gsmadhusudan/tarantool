@@ -57,7 +57,7 @@
  * @throws OutOfMemory
  */
 static struct key_def *
-merge_key_defs(struct key_def *first, struct key_def *second)
+key_defs_merge(struct key_def *first, struct key_def *second)
 {
 	int new_part_count = first->part_count + second->part_count;
 	struct key_part *sec_parts = second->parts;
@@ -95,45 +95,51 @@ merge_key_defs(struct key_def *first, struct key_def *second)
 	return new_def;
 }
 
+struct vinyl_iterator {
+	struct iterator base;
+	/* key and part_count used only for EQ */
+	const char *key;
+	int part_count;
+	const VinylIndex *index;
+	struct key_def *key_def;
+	struct vy_cursor *cursor;
+};
+
 VinylIndex::VinylIndex(struct key_def *key_def_arg)
-	: Index(key_def_arg), db(NULL)
+	: Index(key_def_arg), db(NULL),
+	  space(space_cache_find(key_def->space_id))
 {
-	struct space *space = space_cache_find(key_def->space_id);
-	VinylEngine *engine =
-		(VinylEngine *)space->handler->engine;
+	VinylEngine *engine = (VinylEngine *)space->handler->engine;
 	env = engine->env;
-	format = space->format;
-	tuple_format_ref(format, 1);
 }
 
-void
-VinylIndex::open()
+struct tuple*
+VinylIndex::findByKey(const char *key, uint32_t part_count) const
 {
-	assert(db == NULL);
-	struct space *space;
-	struct key_def *vinyl_key_def = key_def;
-	auto guard = make_scoped_guard([&]{
-		if (vinyl_key_def != key_def) {
-			key_def_delete(vinyl_key_def);
-		}
-        });
-	space = space_cache_find(key_def->space_id);
+	assert(key_def->opts.is_unique && part_count == key_def->part_count);
 	/*
-	 * If the index is not unique, add primary key
-	 * to the end of parts.
+	 * engine_tx might be empty, even if we are in txn context.
+	 * This can happen on a first-read statement.
 	 */
-	if (!key_def->opts.is_unique) {
-		Index *primary = index_find(space, 0);
-		/* Allocates a new (temporary) key_def. */
-		vinyl_key_def = merge_key_defs(key_def, primary->key_def);
-	}
-	/* Create vinyl database. */
-	db = vy_index_new(env, vinyl_key_def, space->format);
-	if ((db == NULL) || vy_index_open(db))
+	struct vy_tx *transaction = in_txn() ?
+		(struct vy_tx *) in_txn()->engine_tx : NULL;
+	struct tuple *tuple = NULL;
+	if (vy_get(transaction, db, key, part_count, &tuple) != 0)
 		diag_raise();
+	return tuple;
 }
 
-VinylIndex::~VinylIndex() { }
+
+struct tuple *
+VinylIndex::replace(struct tuple*, struct tuple*, enum dup_replace_mode)
+{
+	/* This method is unused by vinyl index.
+	 *
+	 * see: vinyl_space.cc
+	 */
+	unreachable();
+	return NULL;
+}
 
 size_t
 VinylIndex::bsize() const
@@ -173,43 +179,196 @@ VinylIndex::count(enum iterator_type type, const char *key,
 	return count;
 }
 
-struct tuple *
-VinylIndex::findByKey(const char *key, uint32_t part_count) const
+VinylPrimaryIndex::VinylPrimaryIndex(struct key_def *key_def)
+	: VinylIndex(key_def) { }
+
+void
+VinylPrimaryIndex::open()
 {
-	assert(key_def->opts.is_unique && part_count == key_def->part_count);
-	/*
-	 * engine_tx might be empty, even if we are in txn context.
-	 * This can happen on a first-read statement.
-	 */
-	struct vy_tx *transaction = in_txn() ?
-		(struct vy_tx *) in_txn()->engine_tx : NULL;
-	struct tuple *tuple = NULL;
-	if (vy_get(transaction, db, key, part_count, &tuple) != 0)
+	assert(db == NULL);
+	/* Create vinyl database. */
+	db = vy_index_new(env, key_def, tuple_format_default);
+	if ((db == NULL) || vy_index_open(db))
 		diag_raise();
+}
+
+VinylSecondaryIndex::VinylSecondaryIndex(struct key_def *key_def_arg)
+	: VinylIndex(key_def_arg), secondary_key_def(NULL),
+	  secondary_to_primary_key_def(NULL)
+{ }
+
+/**
+ * Get tuple from the primary index by the partial tuple from secondary index.
+ */
+static struct tuple *
+index_lookup_full_tuple(const VinylSecondaryIndex *index, struct tuple *tuple)
+{
+	assert(index->key_def->iid != 0);
+	const char *primary_key;
+	/**
+	 * Use the primary key extractor for fetching
+	 * primary key from merged primary and secondary keys.
+	 */
+	struct key_def *extractor = index->secondary_to_primary_key_def;
+	primary_key = tuple_extract_key(tuple, extractor, NULL);
+	/**
+	 * Use the primary index for getting full tuple.
+	 */
+	const Index *primary = index_find(index->space, 0);
+	mp_decode_array(&primary_key); /* Skip array header. */
+	tuple = primary->findByKey(primary_key,
+				   extractor->part_count);
+	return tuple;
+}
+
+struct tuple*
+VinylSecondaryIndex::findByKey(const char *key, uint32_t part_count) const
+{
+	struct tuple *tuple = VinylIndex::findByKey(key, part_count);
+	if (tuple) {
+		/**
+		 * Secondary index stores partial tuples so findByKey
+		 * returns not full tuple. For getting full tuple
+		 * need to find it in primary index by primary key from
+		 * this partial tuple.
+		 */
+		return index_lookup_full_tuple(this, tuple);
+	}
+	return NULL;
+}
+
+void
+VinylSecondaryIndex::open()
+{
+	assert(db == NULL);
+	/**
+	 * vinyl_key_def is key_def for using inside vinyl.
+	 *
+	 * It is merged key_def of this index and key_def of primary index,
+	 * in which parts field numbers are condensed.
+	 * For instance:
+	 * - merged primary and secondary: 3 (str), 6 (uint), 4 (scalar)
+	 * - vinyl_key_def: 0 (str), 1 (uint), 2 (scalar)
+	 *
+	 * Condensing is neccessary because partial tuple consists only
+	 * from primary key and this secondary key fields in a row.
+	 */
+	struct key_def *vinyl_key_def = NULL;
+	auto guard = make_scoped_guard([&]{
+		if (vinyl_key_def)
+			key_def_delete(vinyl_key_def);
+        });
+
+	Index *primary = index_find(space, 0);
+	/* Allocate a new (temporary) key_def for vinyl. */
+	vinyl_key_def = key_defs_merge(key_def, primary->key_def);
+	/* Remember this merged key_def. */
+	secondary_key_def = key_def_dup(vinyl_key_def);
+
+	/* Create primary extractor key_def. */
+	struct key_part *iter = vinyl_key_def->parts;
+	for (uint32_t i = 0; i < vinyl_key_def->part_count; ++i, ++iter) {
+		key_def_set_part(vinyl_key_def, i, i, iter->type);
+	}
+
+	secondary_to_primary_key_def =
+		key_def_build_extractor(primary->key_def, secondary_key_def);
+
+	/* Create vinyl database. */
+	db = vy_index_new(env, vinyl_key_def, tuple_format_default);
+	if ((db == NULL) || vy_index_open(db)) {
+		key_def_delete(secondary_key_def);
+		key_def_delete(secondary_to_primary_key_def);
+		diag_raise();
+	}
+}
+
+VinylSecondaryIndex::~VinylSecondaryIndex() {
+	key_def_delete(secondary_key_def);
+	key_def_delete(secondary_to_primary_key_def);
+}
+
+struct tuple *
+VinylIndex::iterator_next(struct iterator *iter) const
+{
+	struct vinyl_iterator *it = (struct vinyl_iterator *) iter;
+	assert(it->cursor != NULL);
+
+	uint32_t it_sc_version = ::sc_version;
+
+	struct tuple *tuple;
+	if (vy_cursor_next(it->cursor, &tuple) != 0)
+		diag_raise();
+	if (tuple == NULL) { /* not found */
+		/* immediately close the cursor */
+		vy_cursor_delete(it->cursor);
+		it->cursor = NULL;
+		iter->next = NULL;
+		return NULL;
+	}
+	/* found */
+	if (it_sc_version != ::sc_version)
+		return NULL;
 	return tuple;
 }
 
 struct tuple *
-VinylIndex::replace(struct tuple*, struct tuple*, enum dup_replace_mode)
+VinylIndex::iterator_eq(struct iterator *iter) const
 {
-	/* This method is unused by vinyl index.
-	 *
-	 * see: vinyl_space.cc
-	*/
-	unreachable();
+	struct vinyl_iterator *it = (struct vinyl_iterator *) iter;
+	assert(it->cursor != NULL);
+
+	uint32_t it_sc_version = ::sc_version;
+	struct tuple *tuple;
+	if (vy_cursor_next(it->cursor, &tuple) != 0)
+		diag_raise();
+	if (tuple == NULL || it_sc_version != ::sc_version) {
+		goto not_found;
+	}
+
+	/* check equality */
+	if (tuple_compare_with_key(tuple, it->key, it->part_count,
+				it->key_def) != 0) {
+		goto not_found;
+	}
+	return tuple;
+not_found:
+	/* immediately close the cursor */
+	vy_cursor_delete(it->cursor);
+	it->cursor = NULL;
+	iter->next = NULL;
 	return NULL;
 }
 
-struct vinyl_iterator {
-	struct iterator base;
-	/* key and part_count used only for EQ */
-	const char *key;
-	int part_count;
-	const VinylIndex *index;
-	struct key_def *key_def;
-	struct vy_env *env;
-	struct vy_cursor *cursor;
-};
+const struct key_def *
+VinylIndex::get_key_extractor() const
+{
+	return key_def;
+}
+
+struct tuple *
+VinylSecondaryIndex::iterator_next(struct iterator *iter) const
+{
+	struct tuple *tuple = VinylIndex::iterator_next(iter);
+	if (tuple)
+		return index_lookup_full_tuple(this, tuple);
+	return NULL;
+}
+
+struct tuple *
+VinylSecondaryIndex::iterator_eq(struct iterator *iter) const
+{
+	struct tuple *tuple = VinylIndex::iterator_eq(iter);
+	if (tuple)
+		return index_lookup_full_tuple(this, tuple);
+	return NULL;
+}
+
+const struct key_def *
+VinylSecondaryIndex::get_key_extractor() const
+{
+	return secondary_key_def;
+}
 
 void
 vinyl_iterator_free(struct iterator *ptr)
@@ -233,49 +392,14 @@ struct tuple *
 vinyl_iterator_next(struct iterator *ptr)
 {
 	struct vinyl_iterator *it = (struct vinyl_iterator *) ptr;
-	assert(it->cursor != NULL);
-
-	uint32_t it_sc_version = ::sc_version;
-
-	struct tuple *tuple;
-	if (vy_cursor_next(it->cursor, &tuple) != 0)
-		diag_raise();
-	if (tuple == NULL) { /* not found */
-		/* immediately close the cursor */
-		vy_cursor_delete(it->cursor);
-		it->cursor = NULL;
-		ptr->next = NULL;
-		return NULL;
-	}
-
-	/* found */
-	if (it_sc_version != ::sc_version)
-		return NULL;
-	return tuple;
+	return it->index->iterator_next(ptr);
 }
 
 static struct tuple *
 vinyl_iterator_eq(struct iterator *ptr)
 {
 	struct vinyl_iterator *it = (struct vinyl_iterator *) ptr;
-	struct tuple *tuple = vinyl_iterator_next(ptr);
-	if (tuple == NULL)
-		return NULL; /* not found */
-
-	/* check equality */
-	if (tuple_compare_with_key(tuple, it->key, it->part_count,
-				it->key_def) != 0) {
-		/*
-		 * tuple is destroyed on the next call to
-		 * box_tuple_XXX() API. See box_tuple_ref()
-		 * comments.
-		 */
-		vy_cursor_delete(it->cursor);
-		it->cursor = NULL;
-		ptr->next = NULL;
-		return NULL;
-	}
-	return tuple;
+	return it->index->iterator_eq(ptr);
 }
 
 static struct tuple *
@@ -283,35 +407,34 @@ vinyl_iterator_exact(struct iterator *ptr)
 {
 	struct vinyl_iterator *it = (struct vinyl_iterator *) ptr;
 	ptr->next = vinyl_iterator_last;
-	const VinylIndex *index = it->index;
-	return index->findByKey(it->key, it->part_count);
+	return it->index->findByKey(it->key, it->part_count);
 }
 
-struct iterator *
+struct iterator*
 VinylIndex::allocIterator() const
 {
 	struct vinyl_iterator *it =
-		(struct vinyl_iterator *) calloc(1, sizeof(*it));
+	        (struct vinyl_iterator *) calloc(1, sizeof(*it));
 	if (it == NULL) {
-		tnt_raise(OutOfMemory, sizeof(struct vinyl_iterator),
-			  "Vinyl Index", "iterator");
+	        tnt_raise(OutOfMemory, sizeof(struct vinyl_iterator),
+	                  "calloc", "vinyl_iterator");
 	}
 	it->base.next = vinyl_iterator_last;
 	it->base.free = vinyl_iterator_free;
 	return (struct iterator *) it;
+
 }
 
 void
 VinylIndex::initIterator(struct iterator *ptr,
-                          enum iterator_type type,
-                          const char *key, uint32_t part_count) const
+                         enum iterator_type type,
+                         const char *key, uint32_t part_count) const
 {
 	assert(part_count == 0 || key != NULL);
 	struct vinyl_iterator *it = (struct vinyl_iterator *) ptr;
 	assert(it->cursor == NULL);
 	it->index = this;
 	it->key_def = vy_index_key_def(db);
-	it->env = env;
 	it->key = key;
 	it->part_count = part_count;
 

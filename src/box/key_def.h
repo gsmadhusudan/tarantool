@@ -400,6 +400,22 @@ bool
 key_def_contains_fieldno(const struct key_def *key_def,
 			uint32_t fieldno);
 
+/**
+ * Create key_def which maps from->key_parts on what->key_parts.
+ * That is following equality must be true:
+ *     from->key_parts[res->key_parts[i].fieldno] = what->key_parts[i]
+ *     (res - result of this function)
+ *
+ * For instance:
+ * - from->key_parts field numbers: 0, 5, 2, 4, 1
+ * - what->key_parts field numbers: 1, 5, 4,
+ *
+ * Result will be:
+ * - res->key_parts field numbers: 4, 1, 3,
+ */
+struct key_def *
+key_def_build_extractor(struct key_def *what, struct key_def *from);
+
 /** Compare two key part arrays.
  *
  * This function is used to find out whether alteration

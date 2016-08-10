@@ -176,6 +176,11 @@ Handler::onAlter(Handler *)
 }
 
 void
+Handler::onAlterSpace(struct space *, struct space *)
+{
+}
+
+void
 Handler::executeSelect(struct txn *, struct space *space,
 		       uint32_t index_id, uint32_t iterator,
 		       uint32_t offset, uint32_t limit,
