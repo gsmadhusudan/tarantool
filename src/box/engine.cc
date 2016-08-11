@@ -263,11 +263,11 @@ engine_begin_initial_recovery()
 }
 
 void
-engine_begin_final_recovery()
+engine_begin_final_recovery(bool local)
 {
 	Engine *engine;
 	engine_foreach(engine)
-		engine->beginFinalRecovery();
+		engine->beginFinalRecovery(local);
 }
 
 void

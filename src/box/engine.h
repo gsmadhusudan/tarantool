@@ -136,7 +136,7 @@ public:
 	 * that could be local WALs during local recovery
 	 * of WAL catch up durin join on slave side
 	 */
-	virtual void beginFinalRecovery() {};
+	virtual void beginFinalRecovery(bool local) {(void) local;};
 	/**
 	 * Inform the engine about the end of recovery from the
 	 * binary log.
@@ -246,10 +246,11 @@ engine_begin_initial_recovery();
 
 /**
  * Called in the middle of JOIN stage,
- * when xlog catch-up process is started
+ * when xlog catch-up process is started.
+ * local is true for local wal recovery
  */
 void
-engine_begin_final_recovery();
+engine_begin_final_recovery(bool local);
 
 /**
  * Called at the end of recovery.

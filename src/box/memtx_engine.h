@@ -61,7 +61,7 @@ struct MemtxEngine: public Engine {
 	virtual void commit(struct txn *txn, int64_t signature) override;
 	virtual void bootstrap() override;
 	virtual void beginInitialRecovery() override;
-	virtual void beginFinalRecovery() override;
+	virtual void beginFinalRecovery(bool local) override;
 	virtual void endRecovery() override;
 	virtual void join(struct xstream *stream) override;
 	virtual int beginCheckpoint() override;

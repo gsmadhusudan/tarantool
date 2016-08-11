@@ -1294,7 +1294,7 @@ bootstrap_from_master(struct server *master)
 	/*
 	 * Process final data (WALs).
 	 */
-	engine_begin_final_recovery();
+	engine_begin_final_recovery(false);
 
 	applier_resume_to_state(applier, APPLIER_JOINED, TIMEOUT_INFINITY);
 
@@ -1372,7 +1372,7 @@ box_init(void)
 
 		/* Replace server vclock using the data from snapshot */
 		vclock_copy(&recovery->vclock, &checkpoint_vclock);
-		engine_begin_final_recovery();
+		engine_begin_final_recovery(true);
 		title("orphan");
 		recovery_follow_local(recovery, &wal_stream.base, "hot_standby",
 				      cfg_getd("wal_dir_rescan_delay"));
@@ -1385,6 +1385,7 @@ box_init(void)
 		box_set_listen();
 		recovery_finalize(recovery, &wal_stream.base);
 
+		engine_begin_final_recovery(false);
 		box_sync_replication_source();
 
 		engine_end_recovery();

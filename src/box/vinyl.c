@@ -9454,8 +9454,9 @@ vinyl_begin_initial_recovery(struct vinyl_env *e)
 }
 
 void
-vinyl_begin_final_recovery(struct vinyl_env *e)
+vinyl_begin_final_recovery(struct vinyl_env *e, bool local)
 {
+	(void) local;
 	assert(e->status == VINYL_INITIAL_RECOVERY);
 	e->status = VINYL_FINAL_RECOVERY;
 }

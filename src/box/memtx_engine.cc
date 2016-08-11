@@ -734,8 +734,9 @@ MemtxEngine::beginInitialRecovery()
 }
 
 void
-MemtxEngine::beginFinalRecovery()
+MemtxEngine::beginFinalRecovery(bool local)
 {
+	(void) local;
 	if (m_state == MEMTX_OK)
 		return;
 

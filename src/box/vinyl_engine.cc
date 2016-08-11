@@ -96,9 +96,9 @@ VinylEngine::beginInitialRecovery()
 }
 
 void
-VinylEngine::beginFinalRecovery()
+VinylEngine::beginFinalRecovery(bool local)
 {
-	vinyl_begin_final_recovery(env);
+	vinyl_begin_final_recovery(env, local);
 }
 
 void

@@ -71,7 +71,7 @@ void
 vinyl_begin_initial_recovery(struct vinyl_env *e);
 
 void
-vinyl_begin_final_recovery(struct vinyl_env *e);
+vinyl_begin_final_recovery(struct vinyl_env *e, bool local);
 
 void
 vinyl_end_recovery(struct vinyl_env *e);
