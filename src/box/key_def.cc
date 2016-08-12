@@ -353,21 +353,26 @@ key_def_contains_fieldno(const struct key_def *key_def,
 }
 
 struct key_def *
-key_def_build_extractor(struct key_def *what, struct key_def *from)
+key_def_build_secondary_to_primary(struct key_def *primary,
+				   struct key_def *secondary)
 {
-	struct key_def *extractor;
-	extractor = key_def_new(from->space_id, from->iid, from->name,
-				from->type, &from->opts, what->part_count);
-	for (uint32_t i = 0; i < what->part_count; ++i) {
-		for (uint32_t j = 0; j < from->part_count; ++j) {
-			if (from->parts[j].fieldno == what->parts[i].fieldno) {
-				key_def_set_part(extractor, i, j,
-						 from->parts[j].type);
+	struct key_def *def;
+	def = key_def_new(secondary->space_id, secondary->iid,
+			  secondary->name, secondary->type,
+			  &secondary->opts, primary->part_count);
+
+	for (uint32_t i = 0; i < primary->part_count; ++i) {
+		for (uint32_t j = 0; j < secondary->part_count; ++j) {
+			if (secondary->parts[j].fieldno ==
+			    primary->parts[i].fieldno) {
+
+				key_def_set_part(def, i, j,
+						 secondary->parts[j].type);
 				break;
 			}
 		}
 	}
-	return extractor;
+	return def;
 }
 
 const struct space_opts space_opts_default = {

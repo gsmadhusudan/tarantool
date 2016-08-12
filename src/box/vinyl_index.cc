@@ -193,8 +193,8 @@ VinylPrimaryIndex::open()
 }
 
 VinylSecondaryIndex::VinylSecondaryIndex(struct key_def *key_def_arg)
-	: VinylIndex(key_def_arg), secondary_key_def(NULL),
-	  secondary_to_primary_key_def(NULL)
+	: VinylIndex(key_def_arg), key_def_secondary(NULL),
+	  key_def_secondary_to_primary(NULL)
 { }
 
 /**
@@ -209,15 +209,15 @@ index_lookup_full_tuple(const VinylSecondaryIndex *index, struct tuple *tuple)
 	 * Use the primary key extractor for fetching
 	 * primary key from merged primary and secondary keys.
 	 */
-	struct key_def *extractor = index->secondary_to_primary_key_def;
-	primary_key = tuple_extract_key(tuple, extractor, NULL);
+	struct key_def *def = index->key_def_secondary_to_primary;
+	primary_key = tuple_extract_key(tuple, def, NULL);
 	/**
 	 * Use the primary index for getting full tuple.
 	 */
 	const Index *primary = index_find(index->space, 0);
 	mp_decode_array(&primary_key); /* Skip array header. */
 	tuple = primary->findByKey(primary_key,
-				   extractor->part_count);
+				   def->part_count);
 	return tuple;
 }
 
@@ -263,7 +263,7 @@ VinylSecondaryIndex::open()
 	/* Allocate a new (temporary) key_def for vinyl. */
 	vinyl_key_def = key_defs_merge(key_def, primary->key_def);
 	/* Remember this merged key_def. */
-	secondary_key_def = key_def_dup(vinyl_key_def);
+	key_def_secondary = key_def_dup(vinyl_key_def);
 
 	/* Create primary extractor key_def. */
 	struct key_part *iter = vinyl_key_def->parts;
@@ -271,21 +271,22 @@ VinylSecondaryIndex::open()
 		key_def_set_part(vinyl_key_def, i, i, iter->type);
 	}
 
-	secondary_to_primary_key_def =
-		key_def_build_extractor(primary->key_def, secondary_key_def);
+	key_def_secondary_to_primary =
+		key_def_build_secondary_to_primary(primary->key_def,
+						   key_def_secondary);
 
 	/* Create vinyl database. */
 	db = vy_index_new(env, vinyl_key_def, tuple_format_default);
 	if ((db == NULL) || vy_index_open(db)) {
-		key_def_delete(secondary_key_def);
-		key_def_delete(secondary_to_primary_key_def);
+		key_def_delete(key_def_secondary);
+		key_def_delete(key_def_secondary_to_primary);
 		diag_raise();
 	}
 }
 
 VinylSecondaryIndex::~VinylSecondaryIndex() {
-	key_def_delete(secondary_key_def);
-	key_def_delete(secondary_to_primary_key_def);
+	key_def_delete(key_def_secondary);
+	key_def_delete(key_def_secondary_to_primary);
 }
 
 struct tuple *
@@ -341,7 +342,7 @@ not_found:
 }
 
 const struct key_def *
-VinylIndex::get_key_extractor() const
+VinylIndex::get_index_key_def() const
 {
 	return key_def;
 }
@@ -365,9 +366,9 @@ VinylSecondaryIndex::iterator_eq(struct iterator *iter) const
 }
 
 const struct key_def *
-VinylSecondaryIndex::get_key_extractor() const
+VinylSecondaryIndex::get_index_key_def() const
 {
-	return secondary_key_def;
+	return key_def_secondary;
 }
 
 void

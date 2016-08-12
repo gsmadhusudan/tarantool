@@ -650,7 +650,7 @@ alter_space_commit(struct trigger *trigger, void * /* event */)
 	 */
 	struct space *old_space = space_cache_replace(alter->new_space);
 
-	old_space->handler->onAlterSpace(old_space, alter->new_space);
+	old_space->handler->doAlterSpace(old_space, alter->new_space);
 	assert(old_space == alter->old_space);
 	space_delete(old_space);
 	alter->new_space = NULL; /* for alter_space_delete(). */
@@ -763,7 +763,8 @@ alter_space_do(struct txn *txn, struct alter_space *alter,
 	 * snapshot/xlog, but needs to continue staying "fully
 	 * built".
 	 */
-	alter->new_space->handler->onAlter(alter->old_space->handler);
+	alter->new_space->handler->prepareAlterSpace(alter->old_space,
+						     alter->new_space);
 
 	memcpy(alter->new_space->access, alter->old_space->access,
 	       sizeof(alter->old_space->access));

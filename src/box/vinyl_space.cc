@@ -61,7 +61,7 @@ vinyl_insert_one(VinylIndex *index, const char *tuple,
 	uint32_t key_len;
 	struct key_def *def = index->key_def;
 	key = tuple_extract_key_raw(tuple, tuple_end,
-				    index->get_key_extractor(), &key_len);
+				    index->get_index_key_def(), &key_len);
 	key_end = key + key_len;
 	/*
 	 * If the index is unique then the new tuple must not
@@ -103,7 +103,7 @@ vinyl_replace_all(struct space *space, struct request *request,
 	VinylIndex *pk = (VinylIndex *)index_find(space, 0);
 	const char *key;
 	key = tuple_extract_key_raw(request->tuple, request->tuple_end,
-				    pk->get_key_extractor(), NULL);
+				    pk->get_index_key_def(), NULL);
 	uint32_t part_count = mp_decode_array(&key);
 
 	/* Get full tuple from the primary index. */
@@ -124,7 +124,7 @@ vinyl_replace_all(struct space *space, struct request *request,
 		 */
 		if (old_tuple) {
 			key = tuple_extract_key(old_tuple,
-						index->get_key_extractor(),
+						index->get_index_key_def(),
 						NULL);
 			part_count = mp_decode_array(&key);
 			if (vy_delete(tx, index->db, key, part_count))
@@ -189,7 +189,7 @@ vinyl_delete_all(struct space *space, struct tuple *tuple,
 			key = request->key;
 		} else {
 			key = tuple_extract_key(tuple,
-						index->get_key_extractor(),
+						index->get_index_key_def(),
 						NULL);
 		}
 		part_count = mp_decode_array(&key);
@@ -331,7 +331,7 @@ VinylSpace::executeUpdate(struct txn*, struct space *space,
 	/* Update secondary keys, avoid duplicates. */
 	for (uint32_t iid = 1; iid < space->index_count; ++iid) {
 		index = (VinylIndex *) space->index[iid];
-		key = tuple_extract_key(old_tuple, index->get_key_extractor(),
+		key = tuple_extract_key(old_tuple, index->get_index_key_def(),
 					NULL);
 		part_count = mp_decode_array(&key);
 		/**
@@ -379,7 +379,7 @@ VinylSpace::executeUpsert(struct txn*, struct space *space,
 }
 
 void
-VinylSpace::onAlterSpace(struct space *old_space, struct space *new_space)
+VinylSpace::doAlterSpace(struct space *old_space, struct space *new_space)
 {
 	(void)old_space;
 	for (uint32_t i = 0; i < new_space->index_count; ++i) {

@@ -91,7 +91,7 @@ public:
 	iterator_eq(struct iterator *iter) const;
 
 	virtual const struct key_def *
-	get_key_extractor() const;
+	get_index_key_def() const;
 
 	struct vy_env *env;
 	struct vy_index *db;
@@ -108,17 +108,21 @@ public:
 
 /**
  * While primary index has only one key_def that is used for validating
- * tuples, secondary index has three key_defs:
+ * tuples, secondary index has four key_defs:
  *
- * - key_def (from class Index) - this is 'public' key_def that
- *   represents index format for external using.
+ * - the one is defined by the user. It contains the key parts of the secondary
+ *   key, as present in the original tuple. This is Index::key_def.
  *
- * - secondary_key_def - this key_def is used for extracting merged secondary
- *   key and primary key from full tuple.
+ * - the second is used to fetch key parts of the secondary key, *augmented*
+ *   with the parts of the primary key. These parts concatenated together
+ *   construe the tuple of the secondary key, i.e. the tuple stored. This
+ *   is VinylSecondaryIndex::key_def_secondary.
  *
- * - secondary_to_primary_key_def - this key_def is used for extracting
- *   primary key from partial tuple, that consists of merged secondary and
- *   primary keys.
+ * - the third one is used to compare tuples of the secondary key
+ *   between each other. This is vy_index::key_def.
+ *
+ * -  the last one is used to build a key for lookup in the primary index,
+ *    based on the tuple fetched from the secondary index.
  */
 class VinylSecondaryIndex: public VinylIndex {
 public:
@@ -137,12 +141,12 @@ public:
 	iterator_eq(struct iterator *iter) const override;
 
 	virtual const struct key_def *
-	get_key_extractor() const override;
+	get_index_key_def() const override;
 
 	virtual ~VinylSecondaryIndex() override;
 
-	struct key_def *secondary_key_def;
-	struct key_def *secondary_to_primary_key_def;
+	struct key_def *key_def_secondary;
+	struct key_def *key_def_secondary_to_primary;
 };
 
 #endif /* TARANTOOL_BOX_VINYL_INDEX_H_INCLUDED */
