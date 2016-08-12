@@ -414,6 +414,8 @@ key_def_contains_fieldno(const struct key_def *key_def,
  *
  * Result will be:
  * - res->key_parts:      4 (number), 1 (uint), 3 (scalar)
+ *
+ * See using in vinyl_index.cc
  */
 struct key_def *
 key_def_build_secondary_to_primary(struct key_def *primary,

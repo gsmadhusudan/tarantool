@@ -76,8 +76,9 @@ vinyl_insert_one(VinylIndex *index, const char *tuple,
 			diag_raise();
 
 		if (found) {
+			struct space *space = space_by_id(def->space_id);
 			tnt_raise(ClientError, ER_TUPLE_FOUND,
-				  index_name(index), space_name(index->space));
+				  index_name(index), space_name(space));
 		}
 	}
 	/**
@@ -379,11 +380,15 @@ VinylSpace::executeUpsert(struct txn*, struct space *space,
 }
 
 void
-VinylSpace::doAlterSpace(struct space *old_space, struct space *new_space)
+VinylSpace::commitAlterSpace(struct space *old_space, struct space *new_space)
 {
+	if (new_space == NULL || new_space->index_count == 0) {
+		/* This is drop space. */
+		return;
+	}
 	(void)old_space;
-	for (uint32_t i = 0; i < new_space->index_count; ++i) {
-		VinylIndex *index = (VinylIndex *)new_space->index[i];
-		index->space = new_space;
+	VinylPrimaryIndex *primary = (VinylPrimaryIndex *)index_find(new_space, 0);
+	for (uint32_t i = 1; i < new_space->index_count; ++i) {
+		((VinylSecondaryIndex *)new_space->index[i])->primary_index = primary;
 	}
 }

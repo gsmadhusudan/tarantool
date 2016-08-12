@@ -52,7 +52,8 @@ struct VinylSpace: public Handler {
 	 * indexes.
 	 */
 	virtual void
-	doAlterSpace(struct space *old_space, struct space *new_space) override;
+	commitAlterSpace(struct space *old_space, struct space *new_space)
+		override;
 };
 
 struct key_def;

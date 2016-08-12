@@ -171,12 +171,12 @@ Handler::executeUpsert(struct txn *, struct space *, struct request *)
 }
 
 void
-Handler::prepareAlterSpace(struct space *, struct space *)
+Handler::doAlterSpace(struct space *, struct space *)
 {
 }
 
 void
-Handler::doAlterSpace(struct space *, struct space *)
+Handler::commitAlterSpace(struct space *, struct space *)
 {
 }
 

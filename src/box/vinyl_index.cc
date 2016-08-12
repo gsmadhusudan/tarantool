@@ -97,7 +97,6 @@ key_defs_merge(struct key_def *first, struct key_def *second)
 
 struct vinyl_iterator {
 	struct iterator base;
-	/* key and part_count used only for EQ */
 	const char *key;
 	int part_count;
 	const VinylIndex *index;
@@ -106,9 +105,9 @@ struct vinyl_iterator {
 };
 
 VinylIndex::VinylIndex(struct key_def *key_def_arg)
-	: Index(key_def_arg), db(NULL),
-	  space(space_cache_find(key_def->space_id))
+	: Index(key_def_arg), db(NULL)
 {
+	struct space *space = space_by_id(key_def->space_id);
 	VinylEngine *engine = (VinylEngine *)space->handler->engine;
 	env = engine->env;
 }
@@ -194,7 +193,7 @@ VinylPrimaryIndex::open()
 
 VinylSecondaryIndex::VinylSecondaryIndex(struct key_def *key_def_arg)
 	: VinylIndex(key_def_arg), key_def_secondary(NULL),
-	  key_def_secondary_to_primary(NULL)
+	  key_def_secondary_to_primary(NULL), primary_index(NULL)
 { }
 
 /**
@@ -214,10 +213,9 @@ index_lookup_full_tuple(const VinylSecondaryIndex *index, struct tuple *tuple)
 	/**
 	 * Use the primary index for getting full tuple.
 	 */
-	const Index *primary = index_find(index->space, 0);
 	mp_decode_array(&primary_key); /* Skip array header. */
-	tuple = primary->findByKey(primary_key,
-				   def->part_count);
+	tuple = index->primary_index->findByKey(primary_key,
+						def->part_count);
 	return tuple;
 }
 
@@ -258,21 +256,21 @@ VinylSecondaryIndex::open()
 		if (vinyl_key_def)
 			key_def_delete(vinyl_key_def);
         });
-
-	Index *primary = index_find(space, 0);
+	struct space *space = space_by_id(key_def->space_id);
+	primary_index = (VinylPrimaryIndex *) index_find(space, 0);
 	/* Allocate a new (temporary) key_def for vinyl. */
-	vinyl_key_def = key_defs_merge(key_def, primary->key_def);
+	vinyl_key_def = key_defs_merge(key_def, primary_index->key_def);
 	/* Remember this merged key_def. */
 	key_def_secondary = key_def_dup(vinyl_key_def);
 
-	/* Create primary extractor key_def. */
+	/* Create key_def_secondary_to_primary key_def. */
 	struct key_part *iter = vinyl_key_def->parts;
 	for (uint32_t i = 0; i < vinyl_key_def->part_count; ++i, ++iter) {
 		key_def_set_part(vinyl_key_def, i, i, iter->type);
 	}
 
 	key_def_secondary_to_primary =
-		key_def_build_secondary_to_primary(primary->key_def,
+		key_def_build_secondary_to_primary(primary_index->key_def,
 						   key_def_secondary);
 
 	/* Create vinyl database. */
@@ -329,7 +327,7 @@ VinylIndex::iterator_eq(struct iterator *iter) const
 
 	/* check equality */
 	if (tuple_compare_with_key(tuple, it->key, it->part_count,
-				it->key_def) != 0) {
+				   it->key_def) != 0) {
 		goto not_found;
 	}
 	return tuple;

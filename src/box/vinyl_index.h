@@ -95,7 +95,6 @@ public:
 
 	struct vy_env *env;
 	struct vy_index *db;
-	struct space *space;
 };
 
 class VinylPrimaryIndex: public VinylIndex {
@@ -121,8 +120,10 @@ public:
  * - the third one is used to compare tuples of the secondary key
  *   between each other. This is vy_index::key_def.
  *
- * -  the last one is used to build a key for lookup in the primary index,
- *    based on the tuple fetched from the secondary index.
+ * - the last one is used to build a key for lookup in the primary index,
+ *   based on the tuple fetched from the secondary index. This is
+ *   key_def_secondary_to_primary. See key_def_build_secondary_to_primary
+ *   in key_def.h
  */
 class VinylSecondaryIndex: public VinylIndex {
 public:
@@ -147,6 +148,7 @@ public:
 
 	struct key_def *key_def_secondary;
 	struct key_def *key_def_secondary_to_primary;
+	VinylPrimaryIndex *primary_index;
 };
 
 #endif /* TARANTOOL_BOX_VINYL_INDEX_H_INCLUDED */
